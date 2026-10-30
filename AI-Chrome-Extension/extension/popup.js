@@ -5,65 +5,66 @@
   /* Configuration                                                            */
   /* ------------------------------------------------------------------------ */
 
-  // If you change the backend port, update this URL and host_permissions in
+  // If you change the backend port, update these URLs and host_permissions in
   // manifest.json as well.
   const TEXT_API_URL = 'http://127.0.0.1:3000/api/generate';
-  const IMAGE_API_URL = 'http://127.0.0.1:3000/api/image';
+  const IMAGE_API_URL = 'http://127.0.0.1:3000/api/generate-image';
   const MAX_TEXT_PROMPT_LENGTH = 4000;
   const MAX_IMAGE_PROMPT_LENGTH = 1000; // keep in sync with the backend
   const REQUEST_TIMEOUT_MS = 70_000;
   const MAX_ERROR_LENGTH = 300;
+  const PREFS_KEY = 'gemini-field-notes.prefs.v1';
 
-  // Response templates. Keys must stay in sync with TEMPLATE_INSTRUCTIONS in
-  // backend/server.js.
+  // Keys must stay in sync with PROMPT_TEMPLATES in backend/server.js.
   const TEMPLATES = [
-    { id: 'default', label: 'Default' },
-    { id: 'detailed', label: 'Detailed' },
-    { id: 'concise', label: 'Concise' },
-    { id: 'eli5', label: 'Explain simply (ELI5)' },
-    { id: 'technical', label: 'Technical' },
-    { id: 'creative', label: 'Creative' },
-    { id: 'explain', label: 'Deep explanation' },
-    { id: 'summarize', label: 'Bullet summary' },
+    { id: 'general', label: 'General', note: 'direct & useful' },
+    { id: 'explain', label: 'Explain', note: 'steps + takeaway' },
+    { id: 'summarize', label: 'Summarize', note: 'key points only' },
+    { id: 'code', label: 'Code', note: 'runnable + notes' },
+    { id: 'creative', label: 'Creative', note: 'vivid voice' },
   ];
 
-  // Response-speed presets ("slow / medium / high"). Keys must stay in sync
-  // with RESPONSE_MODE_INSTRUCTIONS in backend/server.js.
-  const RESPONSE_MODES = [
-    { id: 'slow', label: 'Slow · most detailed' },
-    { id: 'medium', label: 'Medium · balanced' },
-    { id: 'fast', label: 'Fast · brief answer' },
+  // Keys must stay in sync with RESPONSE_MODES in backend/server.js.
+  const DEPTHS = [
+    { id: 'quick', label: 'Quick', note: 'effort \u00b7 low' },
+    { id: 'balanced', label: 'Balanced', note: 'effort \u00b7 medium' },
+    { id: 'detailed', label: 'Deep', note: 'effort \u00b7 high' },
   ];
 
   /* ------------------------------------------------------------------------ */
-  /* Preferences (persisted locally)                                          */
+  /* Preferences                                                              */
   /* ------------------------------------------------------------------------ */
-
-  const PREFS_KEY = 'gemini-assistant-preferences';
 
   function loadPrefs() {
+    let saved = {};
+
     try {
       const raw = localStorage.getItem(PREFS_KEY);
       const parsed = raw ? JSON.parse(raw) : null;
-      return typeof parsed === 'object' && parsed ? parsed : {};
+      if (parsed && typeof parsed === 'object') saved = parsed;
     } catch {
-      return {};
+      // Storage may be unavailable; defaults still make the popup usable.
     }
+
+    return {
+      theme: ['system', 'light', 'dark'].includes(saved.theme) ? saved.theme : 'system',
+      template: TEMPLATES.some((item) => item.id === saved.template)
+        ? saved.template
+        : 'general',
+      responseMode: DEPTHS.some((item) => item.id === saved.responseMode)
+        ? saved.responseMode
+        : 'balanced',
+      appMode: saved.appMode === 'image' ? 'image' : 'text',
+    };
   }
 
-  const prefs = {
-    theme: 'system', // "light" | "dark" | "system"
-    template: 'default',
-    responseMode: 'medium',
-    appMode: 'text', // "text" | "image"
-    ...loadPrefs(),
-  };
+  const prefs = loadPrefs();
 
   function savePrefs() {
     try {
       localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
     } catch {
-      // Storage may be unavailable; preferences simply are not persisted.
+      // Preferences simply are not persisted if storage is unavailable.
     }
   }
 
@@ -74,30 +75,41 @@
   const elements = {
     app: document.querySelector('#app'),
     themeBtn: document.querySelector('#theme-btn'),
+    themeLabel: document.querySelector('#theme-label'),
     themeIconSun: document.querySelector('#theme-icon-sun'),
     themeIconMoon: document.querySelector('#theme-icon-moon'),
+    themeIconSystem: document.querySelector('#theme-icon-system'),
     form: document.querySelector('#prompt-form'),
     modeTextBtn: document.querySelector('#mode-text'),
     modeImageBtn: document.querySelector('#mode-image'),
+    modeNote: document.querySelector('#mode-note'),
     promptLabel: document.querySelector('#prompt-label'),
+    promptLabelText: document.querySelector('#prompt-label-text'),
     prompt: document.querySelector('#prompt'),
     charCount: document.querySelector('#char-count'),
     templateSelect: document.querySelector('#template-select'),
-    responseSelect: document.querySelector('#response-select'),
+    templateNote: document.querySelector('#template-note'),
+    depthNote: document.querySelector('#depth-note'),
+    imageNote: document.querySelector('#image-note'),
     generateBtn: document.querySelector('#generate-btn'),
     generateLabel: document.querySelector('#generate-label'),
     loading: document.querySelector('#loading'),
-    loadingText: document.querySelector('#loading-text'),    error: document.querySelector('#error'),
+    loadingText: document.querySelector('#loading-text'),
+    error: document.querySelector('#error'),
     errorMessage: document.querySelector('#error-message'),
     dismissError: document.querySelector('#dismiss-error'),
     outputSection: document.querySelector('#output-section'),
     outputTitleText: document.querySelector('#output-title-text'),
+    outputStatus: document.querySelector('#output-status'),
     output: document.querySelector('#output'),
     outputImageWrap: document.querySelector('#output-image-wrap'),
     outputImage: document.querySelector('#output-image'),
     copyBtn: document.querySelector('#copy-btn'),
+    copyLabel: document.querySelector('#copy-label'),
     downloadBtn: document.querySelector('#download-btn'),
   };
+
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
 
   let isGenerating = false;
   let copyResetTimer = null;
@@ -107,28 +119,32 @@
   /* Theme                                                                    */
   /* ------------------------------------------------------------------------ */
 
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+  function currentTheme() {
+    if (prefs.theme === 'system') {
+      return prefersDark.matches ? 'dark' : 'light';
+    }
+    return prefs.theme;
+  }
 
   function applyTheme() {
-    if (prefs.theme === 'light' || prefs.theme === 'dark') {
-      document.documentElement.dataset.theme = prefs.theme;
-    } else {
-      delete document.documentElement.dataset.theme; // "system" follows the OS
-    }
+    const theme = currentTheme();
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
 
-    const currentIsDark =
-      prefs.theme === 'dark' || (prefs.theme === 'system' && prefersDark.matches);
-    elements.themeIconSun.hidden = currentIsDark;
-    elements.themeIconMoon.hidden = !currentIsDark;
+    elements.themeIconSun.hidden = prefs.theme !== 'light';
+    elements.themeIconMoon.hidden = prefs.theme !== 'dark';
+    elements.themeIconSystem.hidden = prefs.theme !== 'system';
+    elements.themeLabel.textContent =
+      prefs.theme === 'system' ? 'SYS' : prefs.theme === 'dark' ? 'DARK' : 'LIGHT';
 
-    const next = prefs.theme === 'light' ? 'dark' : 'light';
-    elements.themeBtn.title = `Theme: ${prefs.theme} (click for ${next})`;
+    const label = `Theme: ${prefs.theme}. Click to change.`;
+    elements.themeBtn.title = label;
+    elements.themeBtn.setAttribute('aria-label', label);
   }
 
   elements.themeBtn.addEventListener('click', () => {
-    // Cycle: light -> dark -> system -> light
     prefs.theme =
-      prefs.theme === 'light' ? 'dark' : prefs.theme === 'dark' ? 'system' : 'light';
+      prefs.theme === 'system' ? 'light' : prefs.theme === 'light' ? 'dark' : 'system';
     savePrefs();
     applyTheme();
   });
@@ -138,7 +154,7 @@
   });
 
   /* ------------------------------------------------------------------------ */
-  /* Selects (template + response speed)                                      */
+  /* Selects + depth cards                                                    */
   /* ------------------------------------------------------------------------ */
 
   function fillSelect(select, options) {
@@ -151,57 +167,76 @@
   }
 
   fillSelect(elements.templateSelect, TEMPLATES);
-  fillSelect(elements.responseSelect, RESPONSE_MODES);
 
-  function syncSelect(select, value, fallback) {
-    const exists = [...select.options].some((option) => option.value === value);
-    select.value = exists ? value : fallback;
+  function updateTemplateNote() {
+    const selected = TEMPLATES.find((item) => item.id === prefs.template) ?? TEMPLATES[0];
+    elements.templateNote.textContent = selected.note;
+    elements.templateSelect.value = selected.id;
+  }
+
+  function updateDepthNote() {
+    const selected = DEPTHS.find((item) => item.id === prefs.responseMode) ?? DEPTHS[1];
+    elements.depthNote.textContent = selected.note;
+  }
+
+  function setDepth(value, persist = true) {
+    const selected = DEPTHS.find((item) => item.id === value) ?? DEPTHS[1];
+    prefs.responseMode = selected.id;
+
+    for (const input of document.querySelectorAll('input[name="depth"]')) {
+      input.checked = input.value === selected.id;
+    }
+
+    updateDepthNote();
+    if (persist) savePrefs();
   }
 
   elements.templateSelect.addEventListener('change', () => {
     prefs.template = elements.templateSelect.value;
+    updateTemplateNote();
     savePrefs();
   });
 
-  elements.responseSelect.addEventListener('change', () => {
-    prefs.responseMode = elements.responseSelect.value;
-    savePrefs();
-  });
+  for (const input of document.querySelectorAll('input[name="depth"]')) {
+    input.addEventListener('change', () => {
+      if (input.checked) setDepth(input.value);
+    });
+  }
 
   /* ------------------------------------------------------------------------ */
-  /* Text / image mode switching                                              */
+  /* Text / image mode                                                        */
   /* ------------------------------------------------------------------------ */
 
   const isImageMode = () => prefs.appMode === 'image';
+  const maxPromptLength = () =>
+    isImageMode() ? MAX_IMAGE_PROMPT_LENGTH : MAX_TEXT_PROMPT_LENGTH;
 
-  function maxPromptLength() {
-    return isImageMode() ? MAX_IMAGE_PROMPT_LENGTH : MAX_TEXT_PROMPT_LENGTH;
-  }
-
-  function setAppMode(mode) {
+  function setAppMode(mode, persist = true) {
     prefs.appMode = mode === 'image' ? 'image' : 'text';
-    savePrefs();
-
     const imageMode = isImageMode();
-    elements.app.classList.toggle('is-image', imageMode);
-    elements.modeTextBtn.setAttribute('aria-selected', String(!imageMode));
-    elements.modeImageBtn.setAttribute('aria-selected', String(imageMode));
 
-    elements.promptLabel.textContent = imageMode ? 'Image prompt' : 'Your prompt';
+    elements.app.classList.toggle('is-image', imageMode);
+    elements.modeTextBtn.setAttribute('aria-pressed', String(!imageMode));
+    elements.modeImageBtn.setAttribute('aria-pressed', String(imageMode));
+    elements.modeNote.textContent = imageMode ? 'pictures' : 'words';
+
+    elements.promptLabelText.textContent = imageMode ? 'Image prompt' : 'Prompt';
     elements.prompt.placeholder = imageMode
-      ? 'Describe the image, e.g. a watercolor fox in a misty forest…'
-      : "e.g. Explain quantum computing like I'm five…";
+      ? 'e.g. A tiny observatory on a cliff, risograph print, two colours, night sky.'
+      : "e.g. Explain why the sky turns red at sunset, like I'm curious but busy.";
     elements.prompt.setAttribute('maxlength', String(maxPromptLength()));
 
-    elements.generateLabel.textContent = imageMode ? 'Generate image' : 'Generate';
-    elements.loadingText.textContent = imageMode
-      ? 'Gemini is painting…'
-      : 'Gemini is thinking…';
-    elements.outputTitleText.textContent = imageMode ? 'Image' : 'Response';
+    elements.generateLabel.textContent = imageMode ? 'Make image' : 'Generate';
+    elements.loadingText.textContent = imageMode ? 'Gemini is painting' : 'Gemini is thinking';
+    elements.outputTitleText.textContent = imageMode ? 'Image' : 'Result';
+    elements.imageNote.hidden = !imageMode;
 
-    elements.output.hidden = imageMode;
-    elements.outputImageWrap.hidden = true;
+    elements.copyLabel.textContent = 'Copy';
+    elements.copyBtn.classList.remove('copied');
+    resetOutput();
     updateCharCount();
+
+    if (persist) savePrefs();
   }
 
   elements.modeTextBtn.addEventListener('click', () => {
@@ -217,24 +252,31 @@
   /* ------------------------------------------------------------------------ */
 
   function updateCharCount() {
-    const length = elements.prompt.value.length;
     const max = maxPromptLength();
+
+    if (elements.prompt.value.length > max) {
+      elements.prompt.value = elements.prompt.value.slice(0, max);
+    }
+
+    const length = elements.prompt.value.length;
     elements.charCount.textContent = `${length.toLocaleString('en-US')} / ${max.toLocaleString('en-US')}`;
     elements.charCount.classList.toggle('near-limit', length >= max * 0.9);
-    if (length > max) {
-      elements.prompt.value = elements.prompt.value.slice(0, max);
-      elements.charCount.classList.add('near-limit');
-    }
   }
 
   function setLoading(isLoading) {
     isGenerating = isLoading;
     elements.generateBtn.disabled = isLoading;
+    elements.modeTextBtn.disabled = isLoading;
+    elements.modeImageBtn.disabled = isLoading;
+
     elements.generateLabel.textContent = isLoading
-      ? 'Generating…'
+      ? isImageMode()
+        ? 'Painting\u2026'
+        : 'Thinking\u2026'
       : isImageMode()
-        ? 'Generate image'
+        ? 'Make image'
         : 'Generate';
+
     elements.loading.hidden = !isLoading;
     elements.form.setAttribute('aria-busy', String(isLoading));
   }
@@ -254,27 +296,39 @@
     elements.output.textContent = '';
     elements.outputImageWrap.hidden = true;
     elements.outputImage.removeAttribute('src');
+    elements.outputStatus.textContent = 'received';
     currentImageUrl = null;
-    elements.copyBtn.textContent = 'Copy';
+
+    clearTimeout(copyResetTimer);
+    elements.copyLabel.textContent = 'Copy';
     elements.copyBtn.classList.remove('copied');
+  }
+
+  function revealResult() {
+    elements.outputSection.hidden = false;
+    elements.outputSection.scrollIntoView({ block: 'nearest' });
   }
 
   function showOutput(text) {
     elements.output.textContent = text;
-    elements.outputSection.hidden = false;
-    elements.copyBtn.textContent = 'Copy';
-    elements.copyBtn.classList.remove('copied');
+    elements.output.hidden = false;
+    elements.outputImageWrap.hidden = true;
+    elements.outputStatus.textContent = 'received';
+    revealResult();
   }
 
   function showImage(dataUrl) {
     currentImageUrl = dataUrl;
     elements.outputImage.src = dataUrl;
+    elements.output.hidden = true;
     elements.outputImageWrap.hidden = false;
-    elements.outputSection.hidden = false;
+    elements.outputStatus.textContent = 'rendered';
+    revealResult();
   }
 
   function getResponseError(data, status) {
     const message = data?.error?.message;
+
     if (
       typeof message === 'string' &&
       message.trim() &&
@@ -297,6 +351,7 @@
   async function readJson(response) {
     const raw = await response.text();
     if (!raw) return null;
+
     try {
       return JSON.parse(raw);
     } catch {
@@ -384,7 +439,7 @@
   }
 
   /* ------------------------------------------------------------------------ */
-  /* Events                                                                   */
+  /* Submit + prompt events                                                   */
   /* ------------------------------------------------------------------------ */
 
   elements.form.addEventListener('submit', (event) => {
@@ -394,6 +449,7 @@
 
     const promptText = elements.prompt.value.trim();
     const max = maxPromptLength();
+
     if (!promptText) {
       clearError();
       showError(
@@ -429,42 +485,64 @@
   });
 
   /* ------------------------------------------------------------------------ */
-  /* Quick actions (Explain / Summarize / Rewrite)                            */
+  /* Quick actions                                                            */
   /* ------------------------------------------------------------------------ */
 
   const QUICK_ACTIONS = {
-    explain: (text) =>
-      `Explain the following step by step, in clear simple language. Start with a one-paragraph summary, then break it down:\n\n${text}`,
-    summarize: (text) =>
-      `Summarize the following into the key points as a short bulleted list:\n\n${text}`,
-    rewrite: (text) =>
-      `Rewrite the following text so it is clear, correct and professional, and return only the rewritten version:\n\n${text}`,
+    explain: {
+      template: 'explain',
+      build: (text) =>
+        `Explain the following clearly, step by step. Start with a one-paragraph summary, then break it down, and finish with a one-sentence takeaway:\n\n${text}`,
+    },
+    summarize: {
+      template: 'summarize',
+      build: (text) =>
+        `Summarize the following into the key points. Lead with the main takeaway, then list the supporting points in order of importance:\n\n${text}`,
+    },
+    rewrite: {
+      template: null,
+      build: (text) =>
+        `Rewrite the following so it is clear, correct, and natural, and return only the rewritten version:\n\n${text}`,
+    },
   };
 
-  for (const chip of document.querySelectorAll('.chip')) {
+  for (const chip of document.querySelectorAll('.stamp')) {
     chip.addEventListener('click', () => {
       if (isGenerating) return;
 
       const text = elements.prompt.value.trim();
-      if (!text || text.length > maxPromptLength()) {
+      if (!text) {
         clearError();
-        showError('Enter some text first, then pick a quick action.');
+        showError('Write something first, then pick a quick action.');
         elements.prompt.focus();
         return;
       }
 
+      if (isImageMode()) setAppMode('text');
+
       const action = QUICK_ACTIONS[chip.dataset.action];
       if (!action) return;
 
-      if (isImageMode()) setAppMode('text');
-      elements.prompt.value = action(text);
+      if (action.template && prefs.template !== action.template) {
+        prefs.template = action.template;
+        updateTemplateNote();
+        savePrefs();
+      }
+
+      const nextPrompt = action.build(text);
+      if (nextPrompt.length > MAX_TEXT_PROMPT_LENGTH) {
+        showError('That text is too long for a quick action. Trim it and try again.');
+        return;
+      }
+
+      elements.prompt.value = nextPrompt;
       updateCharCount();
-      generate(elements.prompt.value.trim());
+      generate(nextPrompt);
     });
   }
 
   /* ------------------------------------------------------------------------ */
-  /* Copy response                                                            */
+  /* Copy                                                                     */
   /* ------------------------------------------------------------------------ */
 
   function fallbackCopy(text) {
@@ -487,20 +565,16 @@
 
   function showCopiedState() {
     clearTimeout(copyResetTimer);
-    elements.copyBtn.textContent = 'Copied';
+    elements.copyLabel.textContent = 'Copied';
     elements.copyBtn.classList.add('copied');
     copyResetTimer = setTimeout(() => {
-      elements.copyBtn.textContent = 'Copy';
+      elements.copyLabel.textContent = 'Copy';
       elements.copyBtn.classList.remove('copied');
     }, 1600);
   }
 
   elements.copyBtn.addEventListener('click', async () => {
-    if (isImageMode()) {
-      // Copying images needs clipboard.write with real blobs; the button is
-      // hidden in image mode anyway, so there is nothing to do here.
-      return;
-    }
+    if (isImageMode()) return;
 
     const text = elements.output.textContent;
     if (!text) return;
@@ -523,45 +597,67 @@
   });
 
   /* ------------------------------------------------------------------------ */
-  /* Download response                                                        */
+  /* Download                                                                 */
   /* ------------------------------------------------------------------------ */
 
-  function triggerDownload(anchor) {
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+  function triggerDownload(url, filename, revoke) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    if (revoke) {
+      setTimeout(() => URL.revokeObjectURL(url), 5_000);
+    }
+  }
+
+  function dataUrlToBlob(dataUrl) {
+    const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(dataUrl);
+    if (!match) throw new Error('Invalid image data URL');
+
+    const mime = match[1] || 'image/png';
+    const payload = match[3];
+    const bytes = match[2]
+      ? Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))
+      : new TextEncoder().encode(decodeURIComponent(payload));
+
+    return new Blob([bytes], { type: mime });
   }
 
   elements.downloadBtn.addEventListener('click', () => {
     try {
       if (isImageMode()) {
         if (!currentImageUrl) {
-          showError('Generate an image first, then download it.');
+          showError('Generate an image first, then save it.');
           return;
         }
-        const link = document.createElement('a');
-        link.href = currentImageUrl;
-        link.download = `gemini-image-${Date.now()}.png`;
-        triggerDownload(link);
+
+        const blob = dataUrlToBlob(currentImageUrl);
+        const extension = blob.type.includes('jpeg')
+          ? 'jpg'
+          : blob.type.includes('webp')
+            ? 'webp'
+            : 'png';
+        const url = URL.createObjectURL(blob);
+        triggerDownload(url, `gemini-image-${Date.now()}.${extension}`, true);
         return;
       }
 
       const text = elements.output.textContent;
       if (!text) {
-        showError('Generate a response first, then download it.');
+        showError('Generate a response first, then save it.');
         return;
       }
 
       const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `gemini-response-${Date.now()}.txt`;
-      triggerDownload(link);
-      setTimeout(() => URL.revokeObjectURL(url), 5_000);
+      triggerDownload(url, `gemini-response-${Date.now()}.txt`, true);
     } catch (error) {
       console.error('[popup] Download failed:', error);
-      showError('Could not download the response.');
+      showError('Could not download the result.');
     }
   });
 
@@ -569,10 +665,9 @@
   /* Init                                                                     */
   /* ------------------------------------------------------------------------ */
 
-  syncSelect(elements.templateSelect, prefs.template, 'default');
-  syncSelect(elements.responseSelect, prefs.responseMode, 'medium');
-
-  setAppMode(prefs.appMode);
+  updateTemplateNote();
+  setDepth(prefs.responseMode, false);
+  setAppMode(prefs.appMode, false);
   applyTheme();
   updateCharCount();
 })();

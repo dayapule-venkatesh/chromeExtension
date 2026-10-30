@@ -24,7 +24,7 @@ const HOST = process.env.HOST?.trim() || '127.0.0.1';
 const GEMINI_API_KEY = readApiKey();
 const GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-3.6-flash';
 const GEMINI_IMAGE_MODEL =
-  process.env.GEMINI_IMAGE_MODEL?.trim() || 'gemini-2.5-flash-image';
+  process.env.GEMINI_IMAGE_MODEL?.trim() || 'gemini-3.1-flash-image';
 const MAX_PROMPT_LENGTH = readPositiveInt(process.env.MAX_PROMPT_LENGTH, 4000);
 const IMAGE_MAX_PROMPT_LENGTH = readPositiveInt(
   process.env.IMAGE_MAX_PROMPT_LENGTH,
@@ -35,7 +35,7 @@ const configuredRequestTimeoutMs = readPositiveInt(process.env.REQUEST_TIMEOUT_M
 const REQUEST_TIMEOUT_MS = Math.min(configuredRequestTimeoutMs, MAX_REQUEST_TIMEOUT_MS);
 const GEMINI_MAX_ATTEMPTS = readPositiveInt(process.env.GEMINI_MAX_ATTEMPTS, 2);
 const RATE_LIMIT_MAX = readPositiveInt(process.env.RATE_LIMIT_MAX, 15);
-const RATE_LIMIT_WINDOW_MS = readPositiveInt(process.env.RATE_LIMIT_WINDOW_MS, 60_000);
+const RATE_LIMIT_WINDOW_MS = readPositiveInt(process.env.RATE_LIMIT_WINDOW_MS, 30_000);
 // Image generation is much more expensive than text, so it gets a tighter limit.
 const RATE_LIMIT_IMAGE_MAX = readPositiveInt(process.env.RATE_LIMIT_IMAGE_MAX, 6);
 
@@ -53,36 +53,53 @@ const SYSTEM_INSTRUCTION = [
   'If you are unsure, say so instead of inventing information.',
 ].join(' ');
 
-/* Response templates the frontend can pick from. Keys must stay in sync with
- * the template list in popup.js. */
-const TEMPLATE_INSTRUCTIONS = {
-  default: '',
-  detailed:
-    'Structure the answer with clear short headings and a thorough explanation. Include a concrete example where it helps.',
-  concise:
-    'Answer in as few words as possible while staying accurate: one short paragraph or a compact list.',
-  eli5: 'Explain like the reader is five years old: plain everyday words, a friendly tone, and one simple analogy.',
-  technical:
-    'Assume an expert reader. Use precise terminology, spell out trade-offs and edge cases, and be exact.',
-  creative:
-    'Answer in an engaging, imaginative way with vivid language and a light, playful tone.',
-  explain:
-    'Explain the topic well: start with a one-paragraph plain-language summary, then break it down step by step, and finish with a two-line recap.',
-  summarize:
-    'Reduce the input to its key points as a short bulleted list. Keep names, numbers and facts exact.',
-};
+/* Response recipes the frontend can pick from. Keys must stay in sync with the
+ * TEMPLATES list in popup.js. */
+const PROMPT_TEMPLATES = Object.freeze({
+  general: {
+    instruction:
+      'Answer clearly and directly. Use plain text with short paragraphs and simple lists when useful. If you are unsure, say so.',
+  },
+  explain: {
+    instruction:
+      'Explain the subject clearly and step by step. Define jargon, use a concrete example or analogy, and finish with a one-sentence takeaway.',
+  },
+  summarize: {
+    instruction:
+      'Summarize the key points concisely. Lead with the main takeaway, then list the supporting points in order of importance. Omit filler and keep names, numbers and facts exact.',
+  },
+  code: {
+    instruction:
+      'Act as a senior software engineer. Provide correct, runnable code, keep it minimal, and briefly explain key decisions, assumptions, and edge cases. Use fenced code blocks with a language tag.',
+  },
+  creative: {
+    instruction:
+      'Write with a distinctive, vivid voice. Use concrete imagery, strong verbs, and natural rhythm. Avoid cliches and generic filler.',
+  },
+});
 
-/* Response-speed presets ("slow / medium / fast"). These shape how much effort
- * and detail the model puts into an answer. Keys must stay in sync with
- * popup.js. */
-const RESPONSE_MODE_INSTRUCTIONS = {
-  slow:
-    'Take your time and answer as thoroughly and completely as possible. Cover nuances, context and important caveats.',
-  medium:
-    'Give a well-rounded answer of moderate length: enough detail to be useful, with no padding.',
-  fast:
-    'Answer as briefly and directly as possible, in at most a couple of sentences.',
-};
+/* Response-depth presets. These shape both the instruction and Gemini's
+ * generation budget. Keys must stay in sync with the DEPTHS list in popup.js. */
+const RESPONSE_MODES = Object.freeze({
+  quick: {
+    instruction:
+      'Be concise. Aim for one to three short paragraphs or a compact list. Skip preamble and repetition.',
+    maxOutputTokens: 512,
+    thinkingLevel: 'low',
+  },
+  balanced: {
+    instruction:
+      'Give a clear, well-structured answer with enough detail to be useful. Use headings or lists only when they improve clarity.',
+    maxOutputTokens: 2048,
+    thinkingLevel: 'medium',
+  },
+  detailed: {
+    instruction:
+      'Think carefully and give a thorough answer. Include relevant context, examples, trade-offs or edge cases, and a short summary. Stay focused and avoid padding.',
+    maxOutputTokens: 8192,
+    thinkingLevel: 'high',
+  },
+});
 
 const ai = GEMINI_API_KEY
   ? new GoogleGenAI({
@@ -105,19 +122,40 @@ function safeHasOwn(map, value) {
   return typeof value === 'string' && Object.hasOwn(map, value);
 }
 
-/** Unknown template/mode keys quietly fall back to the defaults. */
 function buildSystemInstruction(template, responseMode) {
-  const parts = [SYSTEM_INSTRUCTION];
-  if (safeHasOwn(TEMPLATE_INSTRUCTIONS, template) && TEMPLATE_INSTRUCTIONS[template]) {
-    parts.push(TEMPLATE_INSTRUCTIONS[template]);
+  return [
+    SYSTEM_INSTRUCTION,
+    PROMPT_TEMPLATES[template].instruction,
+    RESPONSE_MODES[responseMode].instruction,
+  ].join(' ');
+}
+
+/** Validates optional template/depth keys and applies the defaults. */
+function validateOptions(templateValue, responseModeValue) {
+  const template = templateValue ?? 'general';
+  const responseMode = responseModeValue ?? 'balanced';
+
+  if (!safeHasOwn(PROMPT_TEMPLATES, template)) {
+    return {
+      error: {
+        status: 400,
+        code: 'INVALID_TEMPLATE',
+        message: `Template must be one of: ${Object.keys(PROMPT_TEMPLATES).join(', ')}.`,
+      },
+    };
   }
-  if (
-    safeHasOwn(RESPONSE_MODE_INSTRUCTIONS, responseMode) &&
-    RESPONSE_MODE_INSTRUCTIONS[responseMode]
-  ) {
-    parts.push(RESPONSE_MODE_INSTRUCTIONS[responseMode]);
+
+  if (!safeHasOwn(RESPONSE_MODES, responseMode)) {
+    return {
+      error: {
+        status: 400,
+        code: 'INVALID_RESPONSE_MODE',
+        message: `Response depth must be one of: ${Object.keys(RESPONSE_MODES).join(', ')}.`,
+      },
+    };
   }
-  return parts.join(' ');
+
+  return { template, responseMode };
 }
 
 function redactSecrets(message) {
@@ -202,7 +240,8 @@ function isRetryableError(error) {
 
 const MIN_RETRY_BUDGET_MS = 5_000;
 
-async function requestInteraction(prompt, systemInstruction = SYSTEM_INSTRUCTION) {
+async function requestInteraction(prompt, systemInstruction, responseMode) {
+  const mode = RESPONSE_MODES[responseMode];
   // A single deadline keeps the total time across retries inside the
   // extension's client timeout (70s).
   const deadline = Date.now() + REQUEST_TIMEOUT_MS;
@@ -218,6 +257,10 @@ async function requestInteraction(prompt, systemInstruction = SYSTEM_INSTRUCTION
           model: GEMINI_MODEL,
           input: prompt,
           system_instruction: systemInstruction,
+          generation_config: {
+            thinking_level: mode.thinkingLevel,
+            max_output_tokens: mode.maxOutputTokens,
+          },
           store: false,
         },
         { timeout_ms: remainingMs },
@@ -492,6 +535,11 @@ app.post('/api/generate', textRateLimit, async (req, res) => {
     return sendError(res, error.status, error.code, error.message);
   }
 
+  const options = validateOptions(req.body?.template, req.body?.responseMode);
+  if (options.error) {
+    return sendError(res, options.error.status, options.error.code, options.error.message);
+  }
+
   if (!ai) {
     console.error('[generate] GEMINI_API_KEY is missing or still set to the placeholder value.');
     return sendError(
@@ -505,7 +553,8 @@ app.post('/api/generate', textRateLimit, async (req, res) => {
   try {
     const interaction = await requestInteraction(
       prompt,
-      buildSystemInstruction(req.body?.template, req.body?.responseMode),
+      buildSystemInstruction(options.template, options.responseMode),
+      options.responseMode,
     );
 
     const text = interaction.output_text?.trim();
@@ -521,13 +570,15 @@ app.post('/api/generate', textRateLimit, async (req, res) => {
     return res.status(200).json({
       response: text,
       model: GEMINI_MODEL,
+      template: options.template,
+      responseMode: options.responseMode,
     });
   } catch (err) {
     return mapGeminiError(err, res);
   }
 });
 
-app.post('/api/image', imageRateLimit, async (req, res) => {
+app.post(['/api/generate-image', '/api/image'], imageRateLimit, async (req, res) => {
   const { prompt, error } = validatePrompt(req.body?.prompt);
   if (error) {
     return sendError(res, error.status, error.code, error.message);
@@ -612,7 +663,7 @@ const server = app.listen(PORT, HOST, () => {
   }
   if (!ai) {
     console.warn(
-      'WARNING: GEMINI_API_KEY is missing or still set to the placeholder. /api/generate will return 503 until it is configured.',
+      'WARNING: GEMINI_API_KEY is missing or still set to the placeholder. /api/generate and /api/generate-image will return 503 until it is configured.',
     );
   }
 });

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Gemini AI Assistant",
-  "version": "1.0.0",
-  "description": "Generate AI-powered responses with Google Gemini from a clean, secure Chrome extension popup.",
+  "version": "1.1.0",
+  "description": "Ask Gemini for text or images in an editorial field-notes popup backed by a local Express proxy.",
   "action": {
     "default_title": "Gemini AI Assistant",
     "default_popup": "popup.html",

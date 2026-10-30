@@ -40,6 +40,14 @@ function postGenerate(body, headers = {}) {
   });
 }
 
+function postImage(body, headers = {}) {
+  return fetch(`${BASE_URL}/api/generate-image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+}
+
 /**
  * Fails fast if another process is already listening on the test port. Without
  * this check the suite could silently run against a stale server.
@@ -146,6 +154,71 @@ test('POST /api/generate rejects prompts that are too long', async () => {
 
 test('POST /api/generate returns 503 when the API key is not configured', async () => {
   const response = await postGenerate({ prompt: 'Hello Gemini' });
+  assert.equal(response.status, 503);
+
+  const body = await response.json();
+  assert.equal(body.error.code, 'AI_NOT_CONFIGURED');
+});
+
+test('POST /api/generate accepts valid template and depth options', async () => {
+  const response = await postGenerate({
+    prompt: 'Write a small function',
+    template: 'code',
+    responseMode: 'detailed',
+  });
+  assert.equal(response.status, 503);
+
+  const body = await response.json();
+  assert.equal(body.error.code, 'AI_NOT_CONFIGURED');
+});
+
+test('POST /api/generate rejects an unknown template', async () => {
+  const response = await postGenerate({ prompt: 'Hello', template: 'poetry' });
+  assert.equal(response.status, 400);
+
+  const body = await response.json();
+  assert.equal(body.error.code, 'INVALID_TEMPLATE');
+});
+
+test('POST /api/generate rejects an unknown response depth', async () => {
+  const response = await postGenerate({ prompt: 'Hello', responseMode: 'ultra' });
+  assert.equal(response.status, 400);
+
+  const body = await response.json();
+  assert.equal(body.error.code, 'INVALID_RESPONSE_MODE');
+});
+
+test('POST /api/generate-image rejects an empty prompt', async () => {
+  const response = await postImage({ prompt: '  ' });
+  assert.equal(response.status, 400);
+
+  const body = await response.json();
+  assert.equal(body.error.code, 'EMPTY_PROMPT');
+});
+
+test('POST /api/generate-image enforces the image prompt limit', async () => {
+  const response = await postImage({ prompt: 'a'.repeat(1001) });
+  assert.equal(response.status, 400);
+
+  const body = await response.json();
+  assert.equal(body.error.code, 'PROMPT_TOO_LONG');
+  assert.match(body.error.message, /1,000/);
+});
+
+test('POST /api/generate-image returns 503 when the API key is not configured', async () => {
+  const response = await postImage({ prompt: 'A lighthouse in fog' });
+  assert.equal(response.status, 503);
+
+  const body = await response.json();
+  assert.equal(body.error.code, 'AI_NOT_CONFIGURED');
+});
+
+test('POST /api/image remains available as an alias', async () => {
+  const response = await fetch(`${BASE_URL}/api/image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: 'A lighthouse in fog' }),
+  });
   assert.equal(response.status, 503);
 
   const body = await response.json();

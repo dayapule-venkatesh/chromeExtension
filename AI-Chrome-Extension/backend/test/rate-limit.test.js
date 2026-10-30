@@ -64,6 +64,14 @@ function postGenerate(prompt) {
   });
 }
 
+function postImage(prompt) {
+  return fetch(`${BASE_URL}/api/generate-image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  });
+}
+
 before(async () => {
   await assertPortIsFree(PORT);
 
@@ -75,6 +83,8 @@ before(async () => {
       HOST: '127.0.0.1',
       GEMINI_API_KEY: '',
       RATE_LIMIT_MAX: '1',
+      RATE_LIMIT_IMAGE_MAX: '1',
+      RATE_LIMIT_WINDOW_MS: '30000',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -103,7 +113,7 @@ test('the rate limiter allows the configured number of requests', async () => {
   assert.equal(response.headers.get('x-ratelimit-remaining'), '0');
 });
 
-test('the rate limiter reports a 60-second window', async () => {
+test('the rate limiter reports a 30-second window', async () => {
   const response = await postGenerate('second request');
   assert.equal(response.status, 429);
 
@@ -113,7 +123,17 @@ test('the rate limiter reports a 60-second window', async () => {
   const retryAfter = Number(response.headers.get('retry-after'));
   assert.ok(Number.isFinite(retryAfter), 'Retry-After should be numeric');
   assert.ok(
-    retryAfter >= 55 && retryAfter <= 60,
-    `Expected a ~60-second window, got Retry-After=${retryAfter}`,
+    retryAfter >= 25 && retryAfter <= 30,
+    `Expected a ~30-second window, got Retry-After=${retryAfter}`,
   );
+});
+
+test('image generation has its own rate-limit bucket', async () => {
+  const first = await postImage('first image');
+  assert.equal(first.status, 503);
+  assert.equal(first.headers.get('x-ratelimit-remaining'), '0');
+
+  const second = await postImage('second image');
+  assert.equal(second.status, 429);
+  assert.equal((await second.json()).error.code, 'RATE_LIMITED');
 });
