@@ -1,0 +1,22 @@
+{
+  "name": "ai-chrome-extension-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Express backend that proxies Chrome extension prompts to the Google Gemini API.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/smoke.test.js test/rate-limit.test.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@google/genai": "^2.32.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0"
+  }
+}

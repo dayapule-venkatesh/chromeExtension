@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gemini AI Assistant</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main id="app" class="app">
+      <header class="hero">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 2.5l2.1 5.4L19.5 10l-5.4 2.1L12 17.5l-2.1-5.4L4.5 10l5.4-2.1L12 2.5z"
+                fill="currentColor"
+              />
+              <path
+                d="M18.5 15l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1 1-2.5z"
+                fill="currentColor"
+                opacity=".65"
+              />
+            </svg>
+          </span>
+          <div class="brand-copy">
+            <h1>Gemini AI Assistant</h1>
+            <p>Ask anything. Generate images.</p>
+          </div>
+        </div>
+        <button id="theme-btn" class="theme-btn" type="button" title="Theme: system">
+          <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" aria-hidden="true" hidden>
+            <g stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.1 5.1l1.4 1.4M17.5 17.5l1.4 1.4M18.9 5.1l-1.4 1.4M6.5 17.5l-1.4 1.4" />
+            </g>
+          </svg>
+          <svg id="theme-icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" hidden>
+            <path d="M20.6 13.2A8.6 8.6 0 0110.8 3.4 8.6 8.6 0 1013.2 20.6a7.6 7.6 0 017.4-7.4z" />
+          </svg>
+        </button>
+      </header>
+
+      <form id="prompt-form" class="panel composer" novalidate>
+        <div class="mode-switch" role="tablist" aria-label="Generation type">
+          <button id="mode-text" class="mode-btn" type="button" role="tab" aria-selected="true">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+            Text
+          </button>
+          <button id="mode-image" class="mode-btn" type="button" role="tab" aria-selected="false">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" stroke="currentColor" stroke-width="1.7" />
+              <circle cx="9" cy="9.5" r="1.6" fill="currentColor" />
+              <path d="M4.5 16.8l4.2-3.6 3.4 3 3-2.6 4.4 3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            Image
+          </button>
+        </div>
+
+        <div class="field-head">
+          <label id="prompt-label" for="prompt">Your prompt</label>
+          <span id="char-count" class="char-count" aria-live="polite">0 / 4,000</span>
+        </div>
+        <textarea
+          id="prompt"
+          name="prompt"
+          rows="4"
+          maxlength="4000"
+          placeholder="e.g. Explain quantum computing like I'm five…"
+          autofocus
+          required
+          spellcheck="true"
+        ></textarea>
+
+        <div class="controls">
+          <select id="template-select" class="select" aria-label="Response template"></select>
+          <select id="response-select" class="select" aria-label="Response speed"></select>
+        </div>
+
+        <div class="chips" aria-label="Quick actions">
+          <button type="button" class="chip" data-action="explain">Explain</button>
+          <button type="button" class="chip" data-action="summarize">Summarize</button>
+          <button type="button" class="chip" data-action="rewrite">Rewrite</button>
+        </div>
+
+        <button id="generate-btn" class="primary-btn" type="submit">
+          <svg class="btn-spark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M12 3l1.9 4.9L18.8 9.8l-4.9 1.9L12 16.6l-1.9-4.9L5.2 9.8l4.9-1.9L12 3z"
+              fill="currentColor"
+            />
+          </svg>
+          <span id="generate-label">Generate</span>
+        </button>
+        <p class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to generate</p>
+      </form>
+
+      <div id="loading" class="loading" role="status" aria-live="polite" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="loading-text">Gemini is thinking…</span>
+      </div>
+
+      <div id="error" class="alert" role="alert" hidden>
+        <span class="alert-icon" aria-hidden="true">!</span>
+        <p id="error-message"></p>
+        <button id="dismiss-error" class="dismiss-btn" type="button" aria-label="Dismiss error">
+          &times;
+        </button>
+      </div>
+
+      <section id="output-section" class="panel output" aria-labelledby="output-title" hidden>
+        <div class="output-head">
+          <h2 id="output-title"><span class="output-dot" aria-hidden="true"></span><span id="output-title-text">Response</span></h2>
+          <div class="output-actions">
+            <button id="copy-btn" class="copy-btn" type="button">Copy</button>
+            <button id="download-btn" class="copy-btn" type="button">Download</button>
+          </div>
+        </div>
+        <div id="output" class="output-body" tabindex="0" aria-live="polite"></div>
+        <figure id="output-image-wrap" class="output-image" hidden>
+          <img id="output-image" alt="Image generated by Gemini" />
+          <figcaption>Click “Download” to save it as a PNG file.</figcaption>
+        </figure>
+      </section>
+
+      <footer class="footer">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="5" y="10" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.7" />
+          <path d="M8 10V7a4 4 0 118 0v3" stroke="currentColor" stroke-width="1.7" />
+        </svg>
+        <span>Powered by Gemini · Your API key stays on the backend</span>
+      </footer>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
